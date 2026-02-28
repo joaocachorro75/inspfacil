@@ -106,6 +106,14 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Logger global para depuração de rede no Easypanel
+  app.use((req, res, next) => {
+    if (req.path !== '/api/health') {
+      console.log(`[${new Date().toISOString()}] 📥 ${req.method} ${req.path}`);
+    }
+    next();
+  });
+
   // 1. Health Check - MUST BE FIRST for Easypanel/Docker stability
   app.get("/api/health", (req, res) => {
     console.log(`[${new Date().toISOString()}] ❤️ Health Check solicitado`);
