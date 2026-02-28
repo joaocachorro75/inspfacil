@@ -108,6 +108,7 @@ async function startServer() {
 
   // 1. Health Check - MUST BE FIRST for Easypanel/Docker stability
   app.get("/api/health", (req, res) => {
+    console.log(`[${new Date().toISOString()}] ❤️ Health Check solicitado`);
     res.json({ 
       status: "ok", 
       uptime: process.uptime(),
@@ -477,9 +478,9 @@ async function startServer() {
 
   // Handle Graceful Shutdown
   process.on('SIGTERM', () => {
-    console.log('⚠️ SIGTERM recebido. Encerrando servidor graciosamente...');
+    console.log('⚠️ SIGTERM recebido do Easypanel/Docker. Encerrando servidor...');
     server.close(() => {
-      console.log('✅ Servidor encerrado.');
+      console.log('✅ Servidor encerrado com sucesso.');
       process.exit(0);
     });
   });
@@ -487,6 +488,15 @@ async function startServer() {
   process.on('SIGINT', () => {
     console.log('⚠️ SIGINT recebido. Encerrando...');
     server.close(() => process.exit(0));
+  });
+
+  // Global Exception Handlers
+  process.on('uncaughtException', (err) => {
+    console.error('❌ ERRO NÃO TRATADO:', err);
+  });
+
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ REJEIÇÃO NÃO TRATADA em:', promise, 'razão:', reason);
   });
 }
 
