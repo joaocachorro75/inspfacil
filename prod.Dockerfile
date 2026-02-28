@@ -45,5 +45,5 @@ EXPOSE 3000
 # Set environment to production
 ENV NODE_ENV=production
 
-# Start the application
-CMD ["npm", "start"]
+# Start the application directly with node to handle signals better
+CMD ["node", "--experimental-strip-types", "server.ts"]
