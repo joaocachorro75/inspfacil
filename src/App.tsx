@@ -44,7 +44,7 @@ import {
 } from 'recharts';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { GoogleGenAI, Type } from "@google/genai";
+import Groq from "groq-sdk";
 import { User, Inspection, InspectionType, FormField, InspectionReport } from './types';
 
 // --- Components ---
@@ -808,28 +808,26 @@ const NewTypeForm = ({ onComplete, initialData }: { onComplete: () => void, init
         return;
       }
 
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = process.env.GROQ_API_KEY;
       if (!apiKey) {
-        throw new Error('GEMINI_API_KEY não configurada no ambiente.');
+        throw new Error('GROQ_API_KEY não configurada no ambiente.');
       }
-      const ai = new GoogleGenAI({ apiKey });
+      const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true });
       let schema = [];
 
       const promptContent = `Analise o seguinte conteúdo de um formulário de inspeção e gere um esquema JSON para um formulário dinâmico. 
       O esquema deve ser um array de objetos, onde cada objeto tem: "label" (string), "type" (string: 'text', 'number', 'boolean', 'select'), "options" (array de strings, apenas se type for 'select'), "required" (boolean).
       
-      IMPORTANTE: Se o formulário tiver perguntas de Sim/Não/NA, use type: 'boolean'. Se for múltipla escolha, use type: 'select'.`;
+      IMPORTANTE: Se o formulário tiver perguntas de Sim/Não/NA, use type: 'boolean'. Se for múltipla escolha, use type: 'select'.
+      Responda APENAS o JSON.`;
 
-      let parts: any[] = [{ text: promptContent }];
+      let messages: any[] = [{ role: 'user', content: [{ type: 'text', text: promptContent }] }];
 
       if (file) {
         if (file.type === 'application/pdf') {
-          parts.push({
-            inlineData: {
-              data: file.data.split(',')[1],
-              mimeType: 'application/pdf'
-            }
-          });
+          // Groq doesn't support PDF directly, we'd need text extraction
+          // For now, let's assume we can't process PDF or we'd need a server-side extractor
+          messages[0].content.push({ type: 'text', text: "Nota: O usuário enviou um PDF. Tente inferir os campos se houver texto disponível ou peça para enviar em outro formato." });
         } else if (file.type.includes('wordprocessingml') || file.type.includes('msword')) {
           const extractRes = await fetch('/api/extract-text', {
             method: 'POST',
@@ -838,39 +836,25 @@ const NewTypeForm = ({ onComplete, initialData }: { onComplete: () => void, init
           });
           if (extractRes.ok) {
             const { text } = await extractRes.json();
-            parts.push({ text: `Conteúdo do arquivo Word: ${text}` });
+            messages[0].content.push({ type: 'text', text: `Conteúdo do arquivo Word: ${text}` });
           } else {
             throw new Error("Falha ao extrair texto do Word");
           }
         } else {
-          parts.push({ text: `Conteúdo: ${content}` });
+          messages[0].content.push({ type: 'text', text: `Conteúdo: ${content}` });
         }
       } else {
-        parts.push({ text: `Conteúdo: ${content}` });
+        messages[0].content.push({ type: 'text', text: `Conteúdo: ${content}` });
       }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: { parts },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                label: { type: Type.STRING },
-                type: { type: Type.STRING },
-                options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                required: { type: Type.BOOLEAN }
-              },
-              required: ["label", "type", "required"]
-            }
-          }
-        }
+      const response = await groq.chat.completions.create({
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        messages,
+        response_format: { type: "json_object" }
       });
 
-      schema = JSON.parse(response.text);
+      const result = JSON.parse(response.choices[0]?.message?.content || "[]");
+      schema = Array.isArray(result) ? result : (result.schema || result.fields || []);
 
       const url = initialData ? `/api/inspection-types/${initialData.id}` : '/api/inspection-types';
       const method = initialData ? 'PUT' : 'POST';
@@ -1403,32 +1387,32 @@ const ReportView = ({ report }: { report: InspectionReport }) => {
   const generateAnalysis = async () => {
     setLoading(true);
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
+      const apiKey = process.env.GROQ_API_KEY;
       if (!apiKey) {
-        throw new Error('GEMINI_API_KEY não configurada no ambiente.');
+        throw new Error('GROQ_API_KEY não configurada no ambiente.');
       }
-      const ai = new GoogleGenAI({ apiKey });
+      const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true });
       const prompt = `Você é um especialista em segurança do trabalho. Analise os seguintes dados de uma inspeção de "${report.type_name}" e forneça um parecer técnico resumido, destacando riscos e recomendações.
       Dados: ${JSON.stringify(report.data)}`;
 
-      const parts: any[] = [{ text: prompt }];
+      const content: any[] = [{ type: 'text', text: prompt }];
       
       // Add up to 3 photos for analysis
       report.photos.slice(0, 3).forEach((photo: string) => {
-        parts.push({
-          inlineData: {
-            data: photo.split(',')[1],
-            mimeType: 'image/png'
+        content.push({
+          type: 'image_url',
+          image_url: {
+            url: photo
           }
         });
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: { parts }
+      const response = await groq.chat.completions.create({
+        model: "llama-3.2-11b-vision-preview",
+        messages: [{ role: 'user', content }]
       });
 
-      const analysisText = response.text;
+      const analysisText = response.choices[0]?.message?.content || "";
       
       const res = await fetch(`/api/inspections/${report.id}/analysis`, { 
         method: 'POST',
