@@ -817,8 +817,11 @@ const NewTypeForm = ({ onComplete, initialData }: { onComplete: () => void, init
             body: JSON.stringify({ fileData: file.data, fileType: file.type })
           });
           if (extractRes.ok) {
-            const { text } = await extractRes.json();
-            extractedText = text;
+            const data = await extractRes.json();
+            if (!data.hasText) {
+              throw new Error("O arquivo não contém texto extraível. PDFs escaneados precisam ser digitados manualmente ou convertidos para Word. Cole o conteúdo do formulário na área de texto.");
+            }
+            extractedText = data.text;
           } else {
             throw new Error("Falha ao extrair texto do arquivo");
           }

@@ -229,14 +229,23 @@ async function startServer() {
       const buffer = Buffer.from(base64Data, 'base64');
       
       if (fileType === 'application/pdf') {
-        // Extrair texto de PDF - usa método síncrono do pdf-parse
+        // Extrair texto de PDF
         const pdfParse = require('pdf-parse');
         const data = await pdfParse(buffer);
-        res.json({ text: data.text });
+        console.log(`PDF extraído: ${data.text?.length || 0} caracteres, ${data.numpages} páginas`);
+        res.json({ 
+          text: data.text,
+          pages: data.numpages,
+          hasText: (data.text?.length || 0) > 50
+        });
       } else {
         // Word (docx)
         const result = await mammoth.extractRawText({ buffer });
-        res.json({ text: result.value });
+        console.log(`Word extraído: ${result.value?.length || 0} caracteres`);
+        res.json({ 
+          text: result.value,
+          hasText: (result.value?.length || 0) > 50
+        });
       }
     } catch (e: any) {
       console.error("Extract text error:", e);
@@ -248,6 +257,8 @@ async function startServer() {
   app.post("/api/ai/generate-schema", async (req, res) => {
     const { content, fileData, fileType } = req.body;
     
+    console.log(`Gerando schema - Conteúdo: ${content?.length || 0} caracteres`);
+    
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor" });
@@ -256,19 +267,35 @@ async function startServer() {
     const groq = new Groq({ apiKey });
     
     try {
-      const promptContent = `Analise o seguinte conteúdo de um formulário de inspeção e gere um esquema JSON para um formulário dinâmico. 
-      O esquema deve ser um array de objetos, onde cada objeto tem: "label" (string), "type" (string: 'text', 'number', 'boolean', 'select'), "options" (array de strings, apenas se type for 'select'), "required" (boolean).
-      
-      IMPORTANTE: Se o formulário tiver perguntas de Sim/Não/NA, use type: 'boolean'. Se for múltipla escolha, use type: 'select'.
-      Responda APENAS o JSON.`;
+      const promptContent = `Você é um assistente especializado em criar formulários de inspeção de segurança do trabalho.
+
+Analise o conteúdo fornecido e crie um esquema JSON para um formulário dinâmico.
+
+REGRAS:
+1. O esquema deve ser um objeto com uma propriedade "fields" contendo um array de campos
+2. Cada campo tem: "label" (pergunta/título), "type", "required" (boolean)
+3. Tipos disponíveis: 'text' (texto livre), 'number' (números), 'boolean' (Sim/Não/N/A), 'select' (múltipla escolha)
+4. Para 'select', adicione "options" com as opções disponíveis
+5. Para perguntas de Sim/Não, use type 'boolean'
+6. SEMPRE crie pelo menos 3 campos relevantes baseados no contexto
+
+EXEMPLO DE RESPOSTA:
+{
+  "fields": [
+    {"label": "Item inspecionado", "type": "text", "required": true},
+    {"label": "Está em boas condições?", "type": "boolean", "required": true},
+    {"label": "Observações", "type": "text", "required": false}
+  ]
+}
+
+Responda APENAS com o JSON válido, sem explicações.`;
 
       let messages: any[] = [{ role: 'user', content: [{ type: 'text', text: promptContent }] }];
 
-      if (fileData) {
-        // Para Word, o texto já foi extraído pelo endpoint /api/extract-text
-        messages[0].content.push({ type: 'text', text: `Conteúdo do arquivo: ${content}` });
-      } else if (content) {
-        messages[0].content.push({ type: 'text', text: `Conteúdo: ${content}` });
+      if (content && content.trim().length > 0) {
+        messages[0].content.push({ type: 'text', text: `\n\nCONTEÚDO DO FORMULÁRIO:\n${content}` });
+      } else {
+        messages[0].content.push({ type: 'text', text: `\n\nNenhum conteúdo fornecido. Crie um formulário genérico de inspeção de segurança com campos básicos.` });
       }
 
       const response = await groq.chat.completions.create({
@@ -277,8 +304,17 @@ async function startServer() {
         response_format: { type: "json_object" }
       });
 
-      const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+      const responseText = response.choices[0]?.message?.content || "{}";
+      console.log(`Resposta IA: ${responseText.substring(0, 200)}...`);
+      
+      const result = JSON.parse(responseText);
       const schema = Array.isArray(result) ? result : (result.schema || result.fields || []);
+      
+      console.log(`Schema gerado: ${schema.length} campos`);
+      
+      if (schema.length === 0) {
+        return res.status(400).json({ error: "Não foi possível gerar campos do formulário. Tente descrever o formulário na área de texto." });
+      }
       
       res.json({ schema });
     } catch (e: any) {
