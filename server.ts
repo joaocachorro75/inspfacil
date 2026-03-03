@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import mammoth from "mammoth";
 import Groq from "groq-sdk";
+import pdf from "pdf-parse";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -218,14 +219,23 @@ async function startServer() {
     }
   });
 
-  // Admin: Extract text from Word file
+  // Admin: Extract text from Word or PDF file
   app.post("/api/extract-text", async (req, res) => {
-    const { fileData } = req.body;
+    const { fileData, fileType } = req.body;
     try {
       const buffer = Buffer.from(fileData.split(',')[1], 'base64');
-      const result = await mammoth.extractRawText({ buffer });
-      res.json({ text: result.value });
+      
+      if (fileType === 'application/pdf') {
+        // Extrair texto de PDF
+        const data = await pdf(buffer);
+        res.json({ text: data.text });
+      } else {
+        // Word (docx)
+        const result = await mammoth.extractRawText({ buffer });
+        res.json({ text: result.value });
+      }
     } catch (e) {
+      console.error("Extract text error:", e);
       res.status(500).json({ error: "Erro ao extrair texto do arquivo" });
     }
   });

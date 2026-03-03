@@ -807,20 +807,20 @@ const NewTypeForm = ({ onComplete, initialData }: { onComplete: () => void, init
         return;
       }
 
-      // Extrair texto do arquivo se for Word
+      // Extrair texto do arquivo se for Word ou PDF
       let extractedText = content;
       if (file) {
-        if (file.type.includes('wordprocessingml') || file.type.includes('msword')) {
+        if (file.type.includes('wordprocessingml') || file.type.includes('msword') || file.type === 'application/pdf') {
           const extractRes = await fetch('/api/extract-text', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fileData: file.data })
+            body: JSON.stringify({ fileData: file.data, fileType: file.type })
           });
           if (extractRes.ok) {
             const { text } = await extractRes.json();
             extractedText = text;
           } else {
-            throw new Error("Falha ao extrair texto do Word");
+            throw new Error("Falha ao extrair texto do arquivo");
           }
         }
       }
