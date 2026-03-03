@@ -258,7 +258,7 @@ async function startServer() {
       }
 
       const response = await groq.chat.completions.create({
-        model: process.env.GROQ_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct",
+        model: "llama-3.3-70b-versatile",
         messages,
         response_format: { type: "json_object" }
       });
@@ -302,7 +302,7 @@ async function startServer() {
       }
 
       const response = await groq.chat.completions.create({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        model: "llava-v1.5-7b-4096-preview",
         messages: [{ role: 'user', content }]
       });
 
