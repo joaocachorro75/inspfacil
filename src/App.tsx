@@ -44,7 +44,6 @@ import {
 } from 'recharts';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import Groq from "groq-sdk";
 import { User, Inspection, InspectionType, FormField, InspectionReport } from './types';
 
 // --- Components ---
@@ -808,27 +807,10 @@ const NewTypeForm = ({ onComplete, initialData }: { onComplete: () => void, init
         return;
       }
 
-      const apiKey = process.env.GROQ_API_KEY;
-      if (!apiKey) {
-        throw new Error('GROQ_API_KEY não configurada no ambiente.');
-      }
-      const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true });
-      let schema = [];
-
-      const promptContent = `Analise o seguinte conteúdo de um formulário de inspeção e gere um esquema JSON para um formulário dinâmico. 
-      O esquema deve ser um array de objetos, onde cada objeto tem: "label" (string), "type" (string: 'text', 'number', 'boolean', 'select'), "options" (array de strings, apenas se type for 'select'), "required" (boolean).
-      
-      IMPORTANTE: Se o formulário tiver perguntas de Sim/Não/NA, use type: 'boolean'. Se for múltipla escolha, use type: 'select'.
-      Responda APENAS o JSON.`;
-
-      let messages: any[] = [{ role: 'user', content: [{ type: 'text', text: promptContent }] }];
-
+      // Extrair texto do arquivo se for Word
+      let extractedText = content;
       if (file) {
-        if (file.type === 'application/pdf') {
-          // Groq doesn't support PDF directly, we'd need text extraction
-          // For now, let's assume we can't process PDF or we'd need a server-side extractor
-          messages[0].content.push({ type: 'text', text: "Nota: O usuário enviou um PDF. Tente inferir os campos se houver texto disponível ou peça para enviar em outro formato." });
-        } else if (file.type.includes('wordprocessingml') || file.type.includes('msword')) {
+        if (file.type.includes('wordprocessingml') || file.type.includes('msword')) {
           const extractRes = await fetch('/api/extract-text', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -836,38 +818,43 @@ const NewTypeForm = ({ onComplete, initialData }: { onComplete: () => void, init
           });
           if (extractRes.ok) {
             const { text } = await extractRes.json();
-            messages[0].content.push({ type: 'text', text: `Conteúdo do arquivo Word: ${text}` });
+            extractedText = text;
           } else {
             throw new Error("Falha ao extrair texto do Word");
           }
-        } else {
-          messages[0].content.push({ type: 'text', text: `Conteúdo: ${content}` });
         }
-      } else {
-        messages[0].content.push({ type: 'text', text: `Conteúdo: ${content}` });
       }
 
-      const response = await groq.chat.completions.create({
-        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-        messages,
-        response_format: { type: "json_object" }
+      // Chamar endpoint do backend para gerar schema via IA
+      const aiRes = await fetch('/api/ai/generate-schema', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          content: extractedText,
+          fileData: file?.data,
+          fileType: file?.type
+        })
       });
 
-      const result = JSON.parse(response.choices[0]?.message?.content || "[]");
-      schema = Array.isArray(result) ? result : (result.schema || result.fields || []);
+      if (!aiRes.ok) {
+        const err = await aiRes.json();
+        throw new Error(err.error || "Erro ao gerar formulário");
+      }
+
+      const { schema } = await aiRes.json();
 
       const url = initialData ? `/api/inspection-types/${initialData.id}` : '/api/inspection-types';
       const method = initialData ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const saveRes = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, schema })
       });
-      if (res.ok) onComplete();
-    } catch (err) {
+      if (saveRes.ok) onComplete();
+    } catch (err: any) {
       console.error("AI Error:", err);
-      alert("Erro ao gerar formulário via IA. Verifique sua chave de API.");
+      alert(err.message || "Erro ao gerar formulário via IA.");
     } finally {
       setLoading(false);
     }
@@ -1387,45 +1374,26 @@ const ReportView = ({ report }: { report: InspectionReport }) => {
   const generateAnalysis = async () => {
     setLoading(true);
     try {
-      const apiKey = process.env.GROQ_API_KEY;
-      if (!apiKey) {
-        throw new Error('GROQ_API_KEY não configurada no ambiente.');
-      }
-      const groq = new Groq({ apiKey, dangerouslyAllowBrowser: true });
-      const prompt = `Você é um especialista em segurança do trabalho. Analise os seguintes dados de uma inspeção de "${report.type_name}" e forneça um parecer técnico resumido, destacando riscos e recomendações.
-      Dados: ${JSON.stringify(report.data)}`;
-
-      const content: any[] = [{ type: 'text', text: prompt }];
-      
-      // Add up to 3 photos for analysis
-      report.photos.slice(0, 3).forEach((photo: string) => {
-        content.push({
-          type: 'image_url',
-          image_url: {
-            url: photo
-          }
-        });
-      });
-
-      const response = await groq.chat.completions.create({
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        messages: [{ role: 'user', content }]
-      });
-
-      const analysisText = response.choices[0]?.message?.content || "";
-      
-      const res = await fetch(`/api/inspections/${report.id}/analysis`, { 
+      const res = await fetch(`/api/ai/analyze-inspection/${report.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ analysis: analysisText })
+        body: JSON.stringify({
+          typeName: report.type_name,
+          data: report.data,
+          photos: report.photos
+        })
       });
 
-      if (res.ok) {
-        setAnalysis(analysisText);
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Erro ao gerar análise");
       }
-    } catch (e) {
+
+      const { analysis: analysisText } = await res.json();
+      setAnalysis(analysisText);
+    } catch (e: any) {
       console.error("Analysis Error:", e);
-      alert("Erro ao gerar análise via IA.");
+      alert(e.message || "Erro ao gerar análise via IA.");
     } finally {
       setLoading(false);
     }

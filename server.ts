@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import mammoth from "mammoth";
+import Groq from "groq-sdk";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -226,6 +227,94 @@ async function startServer() {
       res.json({ text: result.value });
     } catch (e) {
       res.status(500).json({ error: "Erro ao extrair texto do arquivo" });
+    }
+  });
+
+  // AI: Generate form schema from text/file
+  app.post("/api/ai/generate-schema", async (req, res) => {
+    const { content, fileData, fileType } = req.body;
+    
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor" });
+    }
+
+    const groq = new Groq({ apiKey });
+    
+    try {
+      const promptContent = `Analise o seguinte conteúdo de um formulário de inspeção e gere um esquema JSON para um formulário dinâmico. 
+      O esquema deve ser um array de objetos, onde cada objeto tem: "label" (string), "type" (string: 'text', 'number', 'boolean', 'select'), "options" (array de strings, apenas se type for 'select'), "required" (boolean).
+      
+      IMPORTANTE: Se o formulário tiver perguntas de Sim/Não/NA, use type: 'boolean'. Se for múltipla escolha, use type: 'select'.
+      Responda APENAS o JSON.`;
+
+      let messages: any[] = [{ role: 'user', content: [{ type: 'text', text: promptContent }] }];
+
+      if (fileData) {
+        // Para Word, o texto já foi extraído pelo endpoint /api/extract-text
+        messages[0].content.push({ type: 'text', text: `Conteúdo do arquivo: ${content}` });
+      } else if (content) {
+        messages[0].content.push({ type: 'text', text: `Conteúdo: ${content}` });
+      }
+
+      const response = await groq.chat.completions.create({
+        model: process.env.GROQ_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages,
+        response_format: { type: "json_object" }
+      });
+
+      const result = JSON.parse(response.choices[0]?.message?.content || "{}");
+      const schema = Array.isArray(result) ? result : (result.schema || result.fields || []);
+      
+      res.json({ schema });
+    } catch (e: any) {
+      console.error("AI Error:", e);
+      res.status(500).json({ error: "Erro ao gerar formulário via IA: " + (e.message || "Erro desconhecido") });
+    }
+  });
+
+  // AI: Analyze inspection results with photos
+  app.post("/api/ai/analyze-inspection/:id", async (req, res) => {
+    const inspectionId = req.params.id;
+    const { typeName, data, photos } = req.body;
+    
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GROQ_API_KEY não configurada no servidor" });
+    }
+
+    const groq = new Groq({ apiKey });
+    
+    try {
+      const prompt = `Você é um especialista em segurança do trabalho. Analise os seguintes dados de uma inspeção de "${typeName}" e forneça um parecer técnico resumido, destacando riscos e recomendações.
+      Dados: ${JSON.stringify(data)}`;
+
+      const content: any[] = [{ type: 'text', text: prompt }];
+      
+      // Add up to 3 photos for analysis
+      if (photos && photos.length > 0) {
+        photos.slice(0, 3).forEach((photo: string) => {
+          content.push({
+            type: 'image_url',
+            image_url: { url: photo }
+          });
+        });
+      }
+
+      const response = await groq.chat.completions.create({
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages: [{ role: 'user', content }]
+      });
+
+      const analysis = response.choices[0]?.message?.content || "";
+      
+      // Save analysis to database
+      db.prepare("UPDATE inspection_results SET analysis_text = ? WHERE inspection_id = ?").run(analysis, inspectionId);
+      
+      res.json({ analysis });
+    } catch (e: any) {
+      console.error("AI Analysis Error:", e);
+      res.status(500).json({ error: "Erro ao gerar análise via IA: " + (e.message || "Erro desconhecido") });
     }
   });
 
