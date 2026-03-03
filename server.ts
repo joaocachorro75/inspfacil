@@ -6,9 +6,6 @@ import mammoth from "mammoth";
 import Groq from "groq-sdk";
 import { fileURLToPath } from "url";
 
-// @ts-ignore
-import pdfParse from "pdf-parse/lib/pdf-parse.js";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -228,7 +225,8 @@ async function startServer() {
       const buffer = Buffer.from(fileData.split(',')[1], 'base64');
       
       if (fileType === 'application/pdf') {
-        // Extrair texto de PDF
+        // Extrair texto de PDF usando import dinâmico
+        const pdfParse = (await import("pdf-parse")).default;
         const data = await pdfParse(buffer);
         res.json({ text: data.text });
       } else {
