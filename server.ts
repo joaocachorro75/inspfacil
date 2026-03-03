@@ -302,7 +302,7 @@ async function startServer() {
       }
 
       const response = await groq.chat.completions.create({
-        model: "llava-v1.5-7b-4096-preview",
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
         messages: [{ role: 'user', content }]
       });
 
