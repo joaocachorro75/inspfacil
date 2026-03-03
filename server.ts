@@ -222,11 +222,12 @@ async function startServer() {
   app.post("/api/extract-text", async (req, res) => {
     const { fileData, fileType } = req.body;
     try {
-      const buffer = Buffer.from(fileData.split(',')[1], 'base64');
+      const base64Data = fileData.includes(',') ? fileData.split(',')[1] : fileData;
+      const buffer = Buffer.from(base64Data, 'base64');
       
       if (fileType === 'application/pdf') {
-        // Extrair texto de PDF usando import dinâmico
-        const pdfParse = (await import("pdf-parse")).default;
+        // Extrair texto de PDF - usa método síncrono do pdf-parse
+        const pdfParse = require('pdf-parse');
         const data = await pdfParse(buffer);
         res.json({ text: data.text });
       } else {
@@ -234,9 +235,9 @@ async function startServer() {
         const result = await mammoth.extractRawText({ buffer });
         res.json({ text: result.value });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Extract text error:", e);
-      res.status(500).json({ error: "Erro ao extrair texto do arquivo" });
+      res.status(500).json({ error: "Erro ao extrair texto do arquivo: " + (e.message || "Erro desconhecido") });
     }
   });
 
