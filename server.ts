@@ -299,7 +299,7 @@ Responda APENAS com o JSON válido, sem explicações.`;
       }
 
       const response = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
         messages,
         response_format: { type: "json_object" }
       });
