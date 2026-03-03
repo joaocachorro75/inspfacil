@@ -4,8 +4,10 @@ import path from "path";
 import fs from "fs";
 import mammoth from "mammoth";
 import Groq from "groq-sdk";
-import pdf from "pdf-parse";
 import { fileURLToPath } from "url";
+
+// @ts-ignore
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -227,7 +229,7 @@ async function startServer() {
       
       if (fileType === 'application/pdf') {
         // Extrair texto de PDF
-        const data = await pdf(buffer);
+        const data = await pdfParse(buffer);
         res.json({ text: data.text });
       } else {
         // Word (docx)
