@@ -12,7 +12,12 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database("database.sqlite");
+// Usar /data para persistência (volume externo)
+const dbPath = process.env.NODE_ENV === 'production' 
+  ? '/data/database.sqlite' 
+  : 'database.sqlite';
+
+const db = new Database(dbPath);
 
 // Initialize database
 db.exec(`
